@@ -1,0 +1,56 @@
+[project]
+name = "glimmora-workforce-engine"
+version = "0.2.0"
+description = "Glimmora IT Workforce Intelligence Engine — internal demand-to-deployment platform"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["alembic/versions", ".venv", "var"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "B008",   # FastAPI Depends() in defaults is the framework idiom
+    "RUF012", # mutable class attrs on non-pydantic classes
+    "UP046",  # Generic[T] over PEP 695 type params: Pydantic generics need it
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/models/*" = ["RUF012"]
+# Real job descriptions use en dashes and non-breaking spaces; the parser
+# matches them on purpose, so the "ambiguous character" rule is noise here.
+"app/ai/*" = ["RUF001", "RUF002", "RUF003"]
+# Score ranges are written "0-100" with an en dash in prose.
+"app/engines/*" = ["RUF002"]
+"tests/*" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+warn_unused_configs = true
+warn_redundant_casts = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+exclude = ["alembic/", "var/"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "engine: scoring / matching engine tests",
+    "security: authorization and redaction tests",
+    "e2e: end-to-end business workflow tests",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/seed/*", "alembic/*"]

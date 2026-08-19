@@ -1,0 +1,39 @@
+# backend/ is its own git repository, so the repository-root .gitignore one
+# level up does not apply here. Anything that must stay out of the backend
+# repo has to be listed in this file.
+
+# --- secrets ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# --- application data ------------------------------------------------------
+# var/ is the local document store: real uploaded CVs, passports and work
+# permits. It is personal data and never belongs in source control.
+var/
+tests/_test.db*
+tests/_documents/
+*.db
+*.sqlite3
+
+# --- editors / os ----------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
