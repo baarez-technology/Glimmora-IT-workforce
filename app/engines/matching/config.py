@@ -63,6 +63,29 @@ DEFAULT_THRESHOLDS: dict[str, Any] = {
     "exclude_expired_work_authorisation": False,
     # Recall
     "max_candidates": 200,
+    # --- reverse matching (Phase 8) ------------------------------------
+    #: Reachability multiplies the match score to give redeployment priority.
+    #: It describes whether the *seat* is winnable, not whether the person
+    #: fits, which is why it is a multiplier and not an eighth component.
+    #:
+    #: Phase 9 replaces these with the full eight-factor addressability score
+    #: and its supply gate; the shape of the calculation does not change.
+    "reachability_direct_msa": 1.00,
+    "reachability_direct_customer": 0.95,
+    "reachability_approved_vendor": 0.90,
+    "reachability_preferred_route": 0.85,
+    "reachability_known_route": 0.70,
+    "reachability_no_route": 0.45,
+    "reachability_blocked": 0.05,
+    #: A blocked or routeless account still appears, greyed out, unless this is
+    #: turned on. Sales would rather see it and open the route than never know
+    #: the seat existed.
+    "exclude_unreachable_accounts": False,
+    "reverse_match_limit": 10,
+    #: Days before availability at which the bench sweep raises an alert.
+    "bench_milestones": [90, 60, 30, 15, 7],
+    #: Below this priority a suggestion is not worth alerting anyone about.
+    "bench_alert_min_priority": 45,
 }
 
 #: Warnings a recruiter must see before putting somebody forward.

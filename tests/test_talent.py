@@ -127,20 +127,33 @@ class TestResourceLifecycle:
 
     async def test_bench_lists_unbilled_capacity(self, resourcing):
         client, _ = resourcing
+        # The suite shares one database, so the board is scoped to this test's
+        # own two resources. What is under test is the filter, not pagination.
+        marker = uuid.uuid4().hex[:10]
         benched = (
             await client.post(
                 f"{API}/resources",
-                json=resource_payload(resource_type="BENCH", availability_status="AVAILABLE"),
+                json=resource_payload(
+                    full_name=f"Bench {marker} Unbilled",
+                    resource_type="BENCH",
+                    availability_status="AVAILABLE",
+                ),
             )
         ).json()
         deployed = (
             await client.post(
                 f"{API}/resources",
-                json=resource_payload(resource_type="CONSULTANT", availability_status="DEPLOYED"),
+                json=resource_payload(
+                    full_name=f"Bench {marker} Billing",
+                    resource_type="CONSULTANT",
+                    availability_status="DEPLOYED",
+                ),
             )
         ).json()
 
-        bench = (await client.get(f"{API}/resources/bench", params={"page_size": 100})).json()
+        bench = (
+            await client.get(f"{API}/resources/bench", params={"page_size": 100, "q": marker})
+        ).json()
         ids = [item["id"] for item in bench["items"]]
 
         assert benched["id"] in ids

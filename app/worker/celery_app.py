@@ -45,8 +45,8 @@ celery_app.conf.update(
 TASK_MODULES: tuple[str, ...] = (
     # "app.worker.tasks.parsing",        # Phase 5 / 6
     # "app.worker.tasks.embeddings",     # Phase 6
-    # "app.worker.tasks.matching",       # Phase 7 / 8
-    # "app.worker.tasks.notifications",  # Phase 12
+    "app.worker.tasks.matching",  # Phase 8 — zero-bench sweep
+    "app.worker.tasks.notifications",  # Phase 12 — SLA, expiry, follow-ups
 )
 celery_app.conf.imports = TASK_MODULES
 
@@ -55,20 +55,30 @@ celery_app.conf.imports = TASK_MODULES
 celery_app.conf.beat_schedule = {
     # Phase 12 — submission SLA deadlines (VMS windows are 24-48 hours, so this
     # runs hourly rather than daily).
-    # "sla-sweep": {
-    #     "task": "app.worker.tasks.notifications.sweep_submission_sla",
-    #     "schedule": crontab(minute=5),
-    # },
+    "sla-sweep": {
+        "task": "app.worker.tasks.notifications.sweep_submission_sla",
+        "schedule": crontab(minute=5),
+    },
     # Phase 6 / 12 — visa and work-permit expiry.
-    # "document-expiry-sweep": {
-    #     "task": "app.worker.tasks.notifications.sweep_document_expiry",
-    #     "schedule": crontab(hour=3, minute=0),
-    # },
+    "document-expiry-sweep": {
+        "task": "app.worker.tasks.notifications.sweep_document_expiry",
+        "schedule": crontab(hour=3, minute=0),
+    },
+    # Phase 12 — opportunities whose next action has slipped.
+    "follow-up-sweep": {
+        "task": "app.worker.tasks.notifications.sweep_follow_up_overdue",
+        "schedule": crontab(hour=4, minute=0),
+    },
+    # Phase 12 — client projects approaching their end.
+    "project-ending-sweep": {
+        "task": "app.worker.tasks.notifications.sweep_project_ending",
+        "schedule": crontab(hour=4, minute=30),
+    },
     # Phase 8 — zero-bench: 90/60/30/15/7 days before a deployment ends.
-    # "zero-bench-sweep": {
-    #     "task": "app.worker.tasks.matching.sweep_zero_bench",
-    #     "schedule": crontab(hour=3, minute=30),
-    # },
+    "zero-bench-sweep": {
+        "task": "app.worker.tasks.matching.sweep_zero_bench",
+        "schedule": crontab(hour=3, minute=30),
+    },
 }
 
 

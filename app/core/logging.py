@@ -139,6 +139,8 @@ BUSINESS_EVENTS = frozenset(
         "cv_parsed",
         "match_generated",
         "reverse_match_generated",
+        "bench_sweep_complete",
+        "bench_alert_raised",
         "opportunity_created",
         "score_calculated",
         "cv_submitted",

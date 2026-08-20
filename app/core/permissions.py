@@ -93,7 +93,6 @@ class Permission(StrEnum):
     REVERSE_MATCHING_RUN = "reverse_matching:run"
     SCORING_READ = "scoring:read"
     SCORING_RUN = "scoring:run"
-    COMMERCIAL_READ = "commercial:read"
     COMMERCIAL_RUN = "commercial:run"
 
     # --- pipeline (Phase 10) --------------------------------------------
@@ -119,6 +118,10 @@ class Permission(StrEnum):
     DASHBOARD_ADMIN = "dashboard:admin"
     IMPORT_RUN = "import:run"
     EXPORT_RUN = "export:run"
+    #: Your own inbox. Every role has one, and reads are scoped to the
+    #: caller in the service — this permission gates the endpoint, not the
+    #: visibility of other people's alerts.
+    NOTIFICATION_READ = "notification:read"
 
     # --- sensitive FIELD permissions (SECURITY.md section 3) -------------
     # Absence of these strips the key from the response entirely.
@@ -152,7 +155,6 @@ _MANAGEMENT: frozenset[Permission] = frozenset(
         P.MATCHING_READ,
         P.REVERSE_MATCHING_READ,
         P.SCORING_READ,
-        P.COMMERCIAL_READ,
         P.OPPORTUNITY_READ,
         P.SUBMISSION_READ,
         P.INTERVIEW_READ,
@@ -161,6 +163,7 @@ _MANAGEMENT: frozenset[Permission] = frozenset(
         P.BILLING_READ,
         P.DASHBOARD_MANAGEMENT,
         P.EXPORT_RUN,
+        P.NOTIFICATION_READ,
         # Sees both sides of the commercial picture.
         P.FIELD_RESOURCE_COST,
         P.FIELD_BILLING_RATE,
@@ -196,7 +199,6 @@ _SALES: frozenset[Permission] = frozenset(
         P.REVERSE_MATCHING_READ,
         P.SCORING_READ,
         P.SCORING_RUN,
-        P.COMMERCIAL_READ,
         P.COMMERCIAL_RUN,
         P.OPPORTUNITY_READ,
         P.OPPORTUNITY_WRITE,
@@ -209,9 +211,14 @@ _SALES: frozenset[Permission] = frozenset(
         P.DEPLOYMENT_READ,
         P.DEPLOYMENT_WRITE,
         P.BILLING_READ,
+        # Sales owns the commercial relationship and knows what was actually
+        # invoiced, so it confirms billing. Management reads the result but does
+        # not operate it.
+        P.BILLING_WRITE,
         P.DASHBOARD_SALES,
         P.IMPORT_RUN,
         P.EXPORT_RUN,
+        P.NOTIFICATION_READ,
         # Sales prices the client side and must prioritise on profitability
         # (SOW section 9), so it sees bill rate and margin — but never the
         # consultant's cost rate, which Resourcing negotiates.
@@ -245,7 +252,6 @@ _HR_RESOURCING: frozenset[Permission] = frozenset(
         P.REVERSE_MATCHING_READ,
         P.REVERSE_MATCHING_RUN,
         P.SCORING_READ,
-        P.COMMERCIAL_READ,
         P.OPPORTUNITY_READ,
         P.SUBMISSION_READ,
         P.SUBMISSION_WRITE,
@@ -258,6 +264,7 @@ _HR_RESOURCING: frozenset[Permission] = frozenset(
         P.DASHBOARD_HR,
         P.IMPORT_RUN,
         P.EXPORT_RUN,
+        P.NOTIFICATION_READ,
         # Resourcing negotiates consultant cost and handles visas.
         P.FIELD_RESOURCE_COST,
         P.FIELD_DOCUMENT_PERSONAL_VIEW,

@@ -13,3 +13,8 @@ types-python-dateutil>=2.9.0
 
 # --- Security scanning ---
 pip-audit>=2.7.0
+
+# --- Documentation generation ---
+# Builds docs/Glimmora-Roles-and-Field-Visibility.pdf from the permission
+# matrix. Dev-only: the application never imports it.
+reportlab>=4.2.0

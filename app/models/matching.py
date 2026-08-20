@@ -118,6 +118,21 @@ class Match(BaseEntity):
     missing_information: Mapped[list[Any] | None] = mapped_column(JSONType, nullable=True)
     narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # --- reverse direction only (Phase 8) ------------------------------
+    #: How Glimmora reaches the account holding this requirement. NULL on
+    #: forward matches, which are asked from the requirement's side and so
+    #: already know their own route.
+    route_type: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    route_label: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    route_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        GUID(), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    #: 0-1. NULL means the requirement names no account: unknown, not zero.
+    reachability: Mapped[float | None] = mapped_column(nullable=True)
+    #: overall_score x reachability. Deliberately *not* the Opportunity Score,
+    #: which composes talent, addressability and commercial (Phase 9).
+    priority_score: Mapped[Decimal | None] = mapped_column(ScoreType, nullable=True, index=True)
+
     weights_version: Mapped[int | None] = mapped_column(nullable=True)
     engine_version: Mapped[str] = mapped_column(String(16), nullable=False, default="1.0.0")
     computed_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, index=True)
@@ -132,6 +147,7 @@ class Match(BaseEntity):
         UniqueConstraint("requirement_id", "resource_id", "direction", name="match_unique"),
         Index("ix_matches_requirement_rank", "requirement_id", "overall_score"),
         Index("ix_matches_resource_rank", "resource_id", "overall_score"),
+        Index("ix_matches_reverse_rank", "resource_id", "direction", "priority_score"),
     )
 
 

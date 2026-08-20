@@ -22,8 +22,9 @@ ignore = [
 # Real job descriptions use en dashes and non-breaking spaces; the parser
 # matches them on purpose, so the "ambiguous character" rule is noise here.
 "app/ai/*" = ["RUF001", "RUF002", "RUF003"]
-# Score ranges are written "0-100" with an en dash in prose.
-"app/engines/*" = ["RUF002"]
+# Score ranges are written "0-100" with an en dash in prose, in docstrings
+# (RUF002) and in the `#:` attribute comments Sphinx picks up (RUF003).
+"app/engines/*" = ["RUF002", "RUF003"]
 "tests/*" = ["S101"]
 
 [tool.ruff.lint.isort]

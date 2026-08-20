@@ -12,35 +12,69 @@ from typing import Any
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.ai.vocabulary import SKILL_TO_TECHNOLOGY, SKILL_VOCABULARY
 from app.core.errors import NotFoundError, ValidationError
 from app.core.logging import log_business_event
 from app.db.types import utcnow
-from app.engines.matching.config import default_payload, validate_weights
+from app.engines.matching.config import DEFAULT_THRESHOLDS, default_payload, validate_weights
 from app.engines.matching.engine import (
     ENGINE_VERSION,
     MatchResult,
     RequirementView,
-    ResourceView,
     apply_hard_filters,
     score_match,
 )
-from app.models.demand import Requirement, RequirementSkill, SkillImportance
+from app.models.demand import Requirement
 from app.models.identity import AuditAction, User
 from app.models.matching import Match, MatchDirection, ScoringConfigKind, ScoringConfiguration
-from app.models.talent import Resource, ResourceSkill
+from app.models.talent import Resource
 from app.repositories.talent import DocumentRepository, ResourceRepository
 from app.services.audit import AuditService
-from app.services.documents import work_authorisation_state
-from app.services.resources import ResourceService
+from app.services.matching_views import (
+    build_requirement_views,
+    build_resource_views,
+)
 
 
 def _score_of(result: MatchResult, key: str) -> float | None:
     """Column value for one component, or NULL when it was not assessable."""
     component = result.component(key)
     return component.score if component else None
+
+
+def defaults_for(kind: ScoringConfigKind) -> dict[str, Any]:
+    """The shipped defaults for one rule set."""
+    from app.engines.scoring.config import (
+        DEFAULT_ADDRESSABILITY_RULES,
+        DEFAULT_COMMERCIAL_BANDS,
+        DEFAULT_OPPORTUNITY_WEIGHTS,
+    )
+
+    payloads: dict[ScoringConfigKind, dict[str, Any]] = {
+        ScoringConfigKind.MATCH_WEIGHTS: default_payload(),
+        ScoringConfigKind.ADDRESSABILITY_RULES: dict(DEFAULT_ADDRESSABILITY_RULES),
+        ScoringConfigKind.COMMERCIAL_BANDS: dict(DEFAULT_COMMERCIAL_BANDS),
+        ScoringConfigKind.OPPORTUNITY_WEIGHTS: dict(DEFAULT_OPPORTUNITY_WEIGHTS),
+    }
+    return payloads[kind]
+
+
+def effective_thresholds(config: ScoringConfiguration) -> dict[str, Any]:
+    """Stored thresholds layered over the shipped defaults.
+
+    A stored configuration is a snapshot taken when it was published, so it
+    cannot contain keys the code learned about afterwards. Reading it raw means
+    every release that adds a threshold breaks every database that already has
+    a configuration in it — which is exactly what happened when reverse
+    matching introduced the reachability keys.
+
+    Merging keeps operator intent (a stored value always wins) while letting new
+    keys arrive with their documented default. Weights are deliberately *not*
+    merged: they must sum to 100 and are validated whole at write time, so a
+    silently back-filled weight would corrupt the total.
+    """
+    stored = config.payload.get("thresholds") or {}
+    return {**DEFAULT_THRESHOLDS, **stored}
 
 
 class ScoringConfigService:
@@ -58,9 +92,11 @@ class ScoringConfigService:
         if config is not None:
             return config
         # First run: seed v1 from the documented defaults so the engine always
-        # has a configuration to read.
+        # has a configuration to read. Each kind gets *its own* defaults —
+        # seeding addressability rules with matching weights would be worse
+        # than having no configuration at all.
         return await self.create(
-            kind, name=f"{kind.value} v1", payload=default_payload(), activate=True
+            kind, name=f"{kind.value} v1", payload=defaults_for(kind), activate=True
         )
 
     async def list_configs(
@@ -89,6 +125,10 @@ class ScoringConfigService:
                 raise ValidationError(
                     str(exc), details=[{"field": "weights", "message": str(exc)}]
                 ) from exc
+        else:
+            from app.services.scoring import validate_payload
+
+            validate_payload(kind, payload)
 
         highest = (
             await self.session.execute(
@@ -159,103 +199,8 @@ class MatchingService:
 
     # ------------------------------------------------------------- loading
     async def _requirement_view(self, requirement: Requirement) -> RequirementView:
-        rows = await self.session.execute(
-            select(RequirementSkill)
-            .where(RequirementSkill.requirement_id == requirement.id)
-            .options(selectinload(RequirementSkill.skill))
-        )
-        mandatory: list[str] = []
-        preferred: list[str] = []
-        required_years: dict[str, int | None] = {}
-        technologies: set[str] = set()
-
-        for link in rows.scalars().all():
-            name = link.skill.name
-            required_years[name] = link.min_years
-            if link.importance is SkillImportance.MANDATORY:
-                mandatory.append(name)
-            else:
-                preferred.append(name)
-            family = SKILL_VOCABULARY.get(name, (None, []))[0]
-            if family in SKILL_TO_TECHNOLOGY:
-                technologies.add(SKILL_TO_TECHNOLOGY[family])
-
-        return RequirementView(
-            id=requirement.id,
-            title=requirement.title,
-            mandatory_skills=mandatory,
-            preferred_skills=preferred,
-            required_years=required_years,
-            technologies=technologies,
-            experience_min_years=requirement.experience_min_years,
-            country=requirement.country,
-            location=requirement.location,
-            work_mode=requirement.work_mode.value if requirement.work_mode else None,
-            start_by_date=requirement.start_by_date,
-            rate_max=requirement.rate_max or requirement.rate_min,
-            rate_unit=requirement.rate_unit.value if requirement.rate_unit else None,
-            positions=requirement.positions,
-        )
-
-    async def _resource_views(
-        self, resources: list[Resource], *, today: date
-    ) -> list[ResourceView]:
-        """One batched query for skills; documents come from the eager load."""
-        if not resources:
-            return []
-
-        ids = [resource.id for resource in resources]
-        rows = await self.session.execute(
-            select(ResourceSkill)
-            .where(ResourceSkill.resource_id.in_(ids))
-            .options(selectinload(ResourceSkill.skill))
-        )
-        by_resource: dict[uuid.UUID, list[ResourceSkill]] = {}
-        for link in rows.scalars().all():
-            by_resource.setdefault(link.resource_id, []).append(link)
-
-        views: list[ResourceView] = []
-        for resource in resources:
-            links = by_resource.get(resource.id, [])
-            skills = {link.skill.name: link.years for link in links}
-            last_used = {link.skill.name: link.last_used_year for link in links}
-
-            technologies: set[str] = set()
-            primary: set[str] = set()
-            for link in links:
-                family = SKILL_VOCABULARY.get(link.skill.name, (None, []))[0]
-                technology = SKILL_TO_TECHNOLOGY.get(family) if family else None
-                if technology:
-                    technologies.add(technology)
-                    if link.is_primary:
-                        primary.add(technology)
-
-            authorisation = work_authorisation_state(list(resource.documents), today=today)
-
-            views.append(
-                ResourceView(
-                    id=resource.id,
-                    full_name=resource.full_name,
-                    skills=skills,
-                    skill_last_used=last_used,
-                    primary_technologies=primary,
-                    technologies=technologies,
-                    total_experience_years=resource.total_experience_years,
-                    country=resource.current_location_country,
-                    city=resource.current_location_city,
-                    willing_to_relocate=resource.willing_to_relocate,
-                    ready_from=ResourceService.ready_from(resource, today=today),
-                    notice_period_days=resource.notice_period_days,
-                    available_from=resource.available_from,
-                    expected_cost=resource.expected_cost_amount,
-                    expected_cost_unit=resource.expected_cost_unit,
-                    work_authorisation_state=authorisation.state.value,
-                    work_authorisation_days=authorisation.days_remaining,
-                    needs_review=resource.is_awaiting_review,
-                    availability_status=resource.availability_status.value,
-                )
-            )
-        return views
+        views = await build_requirement_views(self.session, [requirement])
+        return views[requirement.id]
 
     # ------------------------------------------------------------ matching
     async def run_for_requirement(
@@ -269,7 +214,7 @@ class MatchingService:
         reference = today or utcnow().date()
         config = await self.configs.active(ScoringConfigKind.MATCH_WEIGHTS)
         weights = config.payload["weights"]
-        thresholds = config.payload["thresholds"]
+        thresholds = effective_thresholds(config)
 
         requirement_view = await self._requirement_view(requirement)
 
@@ -288,7 +233,7 @@ class MatchingService:
             .all()
         )
 
-        views = await self._resource_views(list(candidates), today=reference)
+        views = await build_resource_views(self.session, list(candidates), today=reference)
 
         results: list[MatchResult] = []
         for view in views:
@@ -413,4 +358,9 @@ class MatchingService:
         return (await self.session.execute(stmt)).scalar()
 
 
-__all__ = ["MatchingService", "ScoringConfigService"]
+__all__ = [
+    "MatchingService",
+    "ScoringConfigService",
+    "defaults_for",
+    "effective_thresholds",
+]
