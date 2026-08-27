@@ -152,7 +152,10 @@ class TestResourceLifecycle:
         ).json()
 
         bench = (
-            await client.get(f"{API}/resources/bench", params={"page_size": 100, "q": marker})
+            await client.get(
+                f"{API}/resources",
+                params={"bench_only": True, "page_size": 100, "q": marker},
+            )
         ).json()
         ids = [item["id"] for item in bench["items"]]
 
@@ -555,5 +558,5 @@ class TestTalentAuthorization:
         assert seen["expected_cost_amount"] is None
 
     async def test_anonymous_callers_are_rejected(self, client):
-        for path in ("/resources", "/resources/bench", "/documents/expiring"):
+        for path in ("/resources", "/resources/available", "/documents/expiring"):
             assert (await client.get(f"{API}{path}")).status_code == 401

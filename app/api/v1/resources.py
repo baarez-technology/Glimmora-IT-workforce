@@ -244,6 +244,12 @@ async def list_resources(
     return Page.build(await _serialize(session, resources, actor=actor), total, params)
 
 
+#: The bench is `GET /resources?bench_only=true`, not an endpoint of its own.
+#: A dedicated /bench route existed and was removed: it called the same service
+#: function with the same argument, but accepted none of the seven filters the
+#: list endpoint takes, so every new filter became a decision about whether to
+#: duplicate it. `/available` below stays because it asks a different question —
+#: it works readiness out from notice period, not just from the end date.
 @router.get("/available", response_model=Page[ResourceResponse], summary="Available now or soon")
 async def list_available(
     session: SessionDep,
@@ -256,17 +262,6 @@ async def list_available(
         available_by=utcnow().date() + timedelta(days=within_days),
         max_notice_days=within_days,
     )
-    return Page.build(await _serialize(session, resources, actor=actor), total, params)
-
-
-@router.get("/bench", response_model=Page[ResourceResponse], summary="Unbilled capacity")
-async def list_bench(
-    session: SessionDep,
-    actor: Annotated[User, Depends(require(Permission.RESOURCE_READ))],
-    params: Annotated[PageParams, Depends(page_params)],
-) -> Page[ResourceResponse]:
-    """The number the zero-bench engine exists to drive to zero (Phase 8)."""
-    resources, total = await ResourceService(session).list_resources(params, bench_only=True)
     return Page.build(await _serialize(session, resources, actor=actor), total, params)
 
 
