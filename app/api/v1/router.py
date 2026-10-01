@@ -44,6 +44,7 @@ api_router.include_router(accounts.technologies_router)
 api_router.include_router(accounts.activities_router)
 # --- Individual job feed (new product surface) ---------------------------
 api_router.include_router(jobfeed.register_router)
+api_router.include_router(jobfeed.webhook_router)
 api_router.include_router(jobfeed.router)
 # --- Phase 5: requirements, JD parsing -----------------------------------
 api_router.include_router(requirements.router)

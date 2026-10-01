@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -17,15 +17,27 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from app.core.deps import SessionDep, require
 from app.core.permissions import Permission
 from app.core.rate_limit import rate_limit
+from app.engines.jobalerts.addressing import address_for
 from app.engines.jobsearch.provider import SearchQuery
 from app.models.identity import User
 from app.models.jobfeed import JobSource, WorkplaceType
+from app.services.jobalerts import (
+    JobAlertService,
+    extract_recipients,
+    first_item,
+    received_at_of,
+    sender_of,
+    verify_webhook_secret,
+)
 from app.services.jobfeed import JobFeedService, serialise
 from app.services.jobsearch import JobSearchService
 from app.services.user import UserService
 
 router = APIRouter(prefix="/job-feed", tags=["job feed"])
 register_router = APIRouter(prefix="/auth", tags=["auth"])
+#: Not under /job-feed: nothing here is authenticated as a user, and keeping
+#: it separate stops it inheriting the feed router's permission dependency.
+webhook_router = APIRouter(prefix="/inbound", tags=["job alerts"])
 
 
 # ----------------------------------------------------------------- schemas
@@ -155,6 +167,37 @@ class SearchAvailability(BaseModel):
     provider: str | None
 
 
+class AlertConnection(BaseModel):
+    """What the connect screen needs to be truthful."""
+
+    enabled: bool
+    forwarding_address: str
+    #: Derived from mail actually received, not from a flag. The screen cannot
+    #: claim a working connection that has never delivered anything.
+    verified: bool
+    count: int
+    last_received_at: datetime | None
+
+
+class PasteAlertRequest(BaseModel):
+    """Import an alert by pasting it.
+
+    Real and useful on its own, and it means the whole path can be exercised
+    before any DNS exists.
+    """
+
+    body: str = Field(min_length=20)
+    subject: str | None = Field(default=None, max_length=400)
+    sender: str | None = Field(default=None, max_length=320)
+
+
+class AlertIngestResult(BaseModel):
+    recognised: bool
+    added: int
+    unparsed: int
+    message: str | None = None
+
+
 # ------------------------------------------------------------ registration
 
 
@@ -267,6 +310,86 @@ async def collect_search(
         results=[SearchResultResponse(**vars(item)) for item in run.results],
         error=run.error,
     )
+
+
+@router.get(
+    "/alerts/connection",
+    response_model=AlertConnection,
+    summary="Your forwarding address and whether anything has arrived",
+)
+async def alert_connection(
+    session: SessionDep,
+    actor: Annotated[User, Depends(require(Permission.JOB_FEED_READ))],
+) -> AlertConnection:
+    state = await JobAlertService(session).connection_state(actor=actor)
+    return AlertConnection(
+        enabled=state["enabled"],
+        forwarding_address=address_for(actor.id),
+        verified=state["count"] > 0,
+        count=state["count"],
+        last_received_at=state["last_received_at"],
+    )
+
+
+@router.post(
+    "/alerts/paste",
+    response_model=AlertIngestResult,
+    summary="Import an alert email by pasting it",
+)
+async def paste_alert(
+    payload: PasteAlertRequest,
+    session: SessionDep,
+    actor: Annotated[User, Depends(require(Permission.JOB_FEED_WRITE))],
+) -> AlertIngestResult:
+    """Into your own feed, never anyone else's.
+
+    The actor is the authenticated caller, so a pasted email cannot be
+    addressed at somebody else however its headers read.
+    """
+    looks_like_html = "<" in payload.body and ">" in payload.body
+    result = await JobAlertService(session).ingest(
+        recipients=None,
+        subject=payload.subject,
+        sender=payload.sender,
+        body_html=payload.body if looks_like_html else None,
+        body_text=None if looks_like_html else payload.body,
+        actor=actor,
+    )
+    return AlertIngestResult(**result)
+
+
+@webhook_router.post(
+    "/brevo/{secret}",
+    response_model=AlertIngestResult,
+    summary="Inbound alert email from Brevo",
+)
+async def brevo_inbound(
+    secret: str,
+    payload: dict[str, Any],
+    session: SessionDep,
+) -> AlertIngestResult:
+    """Unauthenticated by necessity, guarded by an unguessable path.
+
+    Brevo posts as itself, with no bearer token and no signature, so the
+    secret in the URL is the whole of the authentication. A wrong or missing
+    one is a 404 rather than a 403: a 403 would confirm the endpoint exists.
+
+    Whose feed is written to comes from the recipient address in the envelope
+    and nothing else -- a sender cannot choose somebody else's feed by
+    claiming to be them.
+    """
+    verify_webhook_secret(secret)
+
+    item = first_item(payload)
+    result = await JobAlertService(session).ingest(
+        recipients=extract_recipients(item),
+        subject=item.get("Subject"),
+        sender=sender_of(item),
+        body_html=item.get("RawHtmlBody"),
+        body_text=item.get("RawTextBody") or item.get("ExtractedMarkdownMessage"),
+        received_at=received_at_of(item),
+    )
+    return AlertIngestResult(**result)
 
 
 @router.get("/counts", response_model=JobFeedCounts, summary="Counts for the filter chips")

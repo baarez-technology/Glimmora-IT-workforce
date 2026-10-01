@@ -148,6 +148,23 @@ class Settings(BaseSettings):
     JOB_SEARCH_CACHE_SECONDS: int = 900
     JOB_SEARCH_TIMEOUT_SECONDS: int = 180
 
+    # -------------------------------------------------- inbound job alerts
+    #: Off until the DNS and the webhook are live. The connect screen says so
+    #: rather than handing out an address that cannot receive anything.
+    JOB_ALERTS_ENABLED: bool = False
+    BREVO_API_KEY: str | None = None
+    #: A subdomain delegated to Brevo by MX record. It must not be the domain
+    #: ordinary company mail arrives on: the delegation is domain-wide, so
+    #: pointing glimmora.ai here would divert every address on it.
+    BREVO_INBOUND_DOMAIN: str = "jobs.glimmora.ai"
+    #: Where Brevo posts. No trailing slash.
+    PUBLIC_BASE_URL: str | None = None
+    #: Brevo does not sign inbound payloads, so an unguessable path is what
+    #: stops anyone posting fabricated alerts into somebody's feed.
+    JOB_ALERTS_WEBHOOK_SECRET: str | None = None
+    #: One alert email should not be able to flood a feed.
+    JOB_ALERTS_MAX_PER_EMAIL: int = 50
+
     # --------------------------------------------------------------- email
     EMAIL_TRANSPORT: EmailTransport = EmailTransport.LOG
     SMTP_HOST: str = ""
