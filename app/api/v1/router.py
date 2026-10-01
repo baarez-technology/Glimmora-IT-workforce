@@ -13,6 +13,7 @@ from app.api.v1 import (
     audit,
     auth,
     delivery,
+    jobfeed,
     matching,
     pipeline,
     platform,
@@ -41,6 +42,9 @@ api_router.include_router(accounts.contacts_router)
 api_router.include_router(accounts.projects_router)
 api_router.include_router(accounts.technologies_router)
 api_router.include_router(accounts.activities_router)
+# --- Individual job feed (new product surface) ---------------------------
+api_router.include_router(jobfeed.register_router)
+api_router.include_router(jobfeed.router)
 # --- Phase 5: requirements, JD parsing -----------------------------------
 api_router.include_router(requirements.router)
 api_router.include_router(requirements.skills_router)

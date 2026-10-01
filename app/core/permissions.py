@@ -23,6 +23,9 @@ class Role(StrEnum):
     MANAGEMENT = "MANAGEMENT"
     SALES = "SALES"
     HR_RESOURCING = "HR_RESOURCING"
+    #: Not a Glimmora employee. An individual who signed themselves up to
+    #: follow their own job feed, and who can see nothing of the business.
+    INDIVIDUAL = "INDIVIDUAL"
 
 
 ROLE_LABELS: dict[Role, str] = {
@@ -30,6 +33,7 @@ ROLE_LABELS: dict[Role, str] = {
     Role.MANAGEMENT: "Management",
     Role.SALES: "Sales",
     Role.HR_RESOURCING: "HR / Resourcing",
+    Role.INDIVIDUAL: "Individual",
 }
 
 ROLE_DESCRIPTIONS: dict[Role, str] = {
@@ -43,6 +47,9 @@ ROLE_DESCRIPTIONS: dict[Role, str] = {
     ),
     Role.HR_RESOURCING: (
         "Talent, documents, availability and redeployment. Sees consultant cost, not client margin."
+    ),
+    Role.INDIVIDUAL: (
+        "Their own job feed and nothing else. Not a Glimmora employee and sees no business data."
     ),
 }
 
@@ -131,6 +138,14 @@ class Permission(StrEnum):
     FIELD_CONTRACT_VALUE = "contract_value:view"
     FIELD_DOCUMENT_PERSONAL_VIEW = "document.personal:view"
     FIELD_DOCUMENT_PERSONAL_DOWNLOAD = "document.personal:download"
+
+    # --- the individual job feed -----------------------------------------
+    #: Read your own feed. Scoping is by row, not by role: holding this
+    #: permission grants access to your own items and to nobody else's, so
+    #: an Admin holding it still sees only their own (empty) feed.
+    JOB_FEED_READ = "job_feed:read"
+    #: Mark read, save, unsave -- again only on your own items.
+    JOB_FEED_WRITE = "job_feed:write"
 
 
 P = Permission
@@ -272,11 +287,31 @@ _HR_RESOURCING: frozenset[Permission] = frozenset(
     }
 )
 
+_INDIVIDUAL: frozenset[Permission] = frozenset(
+    {
+        # Deliberately tiny. An individual is not staff: they hold no read on
+        # accounts, demand, talent, pipeline, billing or administration, and
+        # the two permissions they do hold reach only their own rows.
+        P.JOB_FEED_READ,
+        P.JOB_FEED_WRITE,
+    }
+)
+
+#: The roles held by Glimmora employees.
+#:
+#: INDIVIDUAL is deliberately outside this set. It exists so that "every role
+#: can read accounts" style checks mean what they say -- an individual is not
+#: staff and must not be swept into a business-access assertion.
+STAFF_ROLES: frozenset[Role] = frozenset(
+    {Role.ADMIN, Role.MANAGEMENT, Role.SALES, Role.HR_RESOURCING}
+)
+
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.ADMIN: ALL_PERMISSIONS,
     Role.MANAGEMENT: _MANAGEMENT,
     Role.SALES: _SALES,
     Role.HR_RESOURCING: _HR_RESOURCING,
+    Role.INDIVIDUAL: _INDIVIDUAL,
 }
 
 # Field permissions are called out separately so the Admin UI can present the
@@ -319,6 +354,7 @@ __all__ = [
     "ROLE_DESCRIPTIONS",
     "ROLE_LABELS",
     "ROLE_PERMISSIONS",
+    "STAFF_ROLES",
     "Permission",
     "Role",
     "has_permission",

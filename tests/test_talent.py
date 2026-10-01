@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-from app.core.permissions import Role
+from app.core.permissions import STAFF_ROLES, Role
 
 API = "/api/v1"
 
@@ -533,7 +533,7 @@ class TestTalentAuthorization:
         response = await client.post(f"{API}/resources", json=resource_payload())
         assert response.status_code == expected
 
-    @pytest.mark.parametrize("role", list(Role))
+    @pytest.mark.parametrize("role", sorted(STAFF_ROLES))
     async def test_every_role_can_read_resources(self, as_role, role):
         client, _ = await as_role(role)
         assert (await client.get(f"{API}/resources")).status_code == 200

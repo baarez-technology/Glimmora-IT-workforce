@@ -71,6 +71,47 @@ class UserService:
         )
         return user
 
+    async def register_individual(
+        self, *, email: str, full_name: str, password: str
+    ) -> User:
+        """Self-service signup for an individual.
+
+        Distinct from `create_user`, which an administrator calls to make a
+        colleague. Here the person is creating their own account, so there is
+        no actor: the audit entry records the email instead.
+
+        The role is fixed to INDIVIDUAL and is never taken from the request.
+        Accepting a role from an unauthenticated caller would let anyone mint
+        themselves an administrator.
+        """
+        if await self.users.email_taken(email):
+            raise ConflictError(
+                "An account with that email address already exists.",
+                details=[{"field": "email", "message": "Already in use"}],
+            )
+
+        validate_password_strength(password, email=email)
+
+        user = User(
+            email=email,
+            full_name=full_name,
+            hashed_password=hash_password(password),
+            role=Role.INDIVIDUAL,
+            is_active=True,
+            must_change_password=False,
+        )
+        await self.users.add(user)
+
+        await self.audit.record(
+            AuditAction.USER_CREATED,
+            summary=f"{email} registered as an individual",
+            actor_email=email,
+            entity_type="user",
+            entity_id=user.id,
+            changes={"role": {"from": None, "to": Role.INDIVIDUAL.value}},
+        )
+        return user
+
     async def update_user(
         self, user_id: uuid.UUID, payload: UserUpdateRequest, *, actor: User
     ) -> User:

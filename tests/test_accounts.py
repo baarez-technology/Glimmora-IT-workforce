@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.core.permissions import Role
+from app.core.permissions import STAFF_ROLES, Role
 
 API = "/api/v1"
 
@@ -590,7 +590,7 @@ class TestAccountsAuthorization:
         response = await client.post(f"{API}/accounts", json=account_payload())
         assert response.status_code == expected
 
-    @pytest.mark.parametrize("role", list(Role))
+    @pytest.mark.parametrize("role", sorted(STAFF_ROLES))
     async def test_every_role_can_read_accounts(self, as_role, role):
         """Resourcing needs account context to judge redeployment options."""
         client, _ = await as_role(role)

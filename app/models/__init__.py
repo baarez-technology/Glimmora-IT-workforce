@@ -52,6 +52,12 @@ from app.models.demand import (
 
 # --- Phase 3: identity ---------------------------------------------------
 from app.models.identity import AuditAction, AuditLog, LoginAttempt, RefreshToken, User
+from app.models.jobfeed import (
+    JobFeedItem,
+    JobPosting,
+    JobSource,
+    WorkplaceType,
+)
 
 # --- Phase 7-9: intelligence ---------------------------------------------
 from app.models.matching import (
@@ -157,6 +163,9 @@ __all__ = [
     "Interview",
     "InterviewMode",
     "InterviewOutcome",
+    "JobFeedItem",
+    "JobPosting",
+    "JobSource",
     "LoginAttempt",
     "Match",
     "MatchBand",
@@ -202,5 +211,6 @@ __all__ = [
     "User",
     "VisaStatus",
     "WorkMode",
+    "WorkplaceType",
     "normalize_skill",
 ]
