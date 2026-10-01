@@ -8,6 +8,7 @@ requires authentication and returns only the caller's own rows.
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict
 from datetime import date, datetime
 from typing import Annotated, Any
 
@@ -307,7 +308,9 @@ async def collect_search(
     return SearchRunResponse(
         search_id=run.id,
         status=run.status.value,
-        results=[SearchResultResponse(**vars(item)) for item in run.results],
+        # asdict, not vars: SearchResult is a slotted dataclass, so it has no
+        # __dict__ for vars() to read.
+        results=[SearchResultResponse(**asdict(item)) for item in run.results],
         error=run.error,
     )
 

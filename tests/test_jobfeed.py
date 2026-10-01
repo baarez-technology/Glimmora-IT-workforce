@@ -147,9 +147,7 @@ class TestRegistration:
             f"{API}/auth/register",
             json={"email": email, "full_name": "Sign In", "password": STRONG},
         )
-        response = await client.post(
-            f"{API}/auth/login", json={"email": email, "password": STRONG}
-        )
+        response = await client.post(f"{API}/auth/login", json={"email": email, "password": STRONG})
         assert response.status_code == 200
         assert response.json()["user"]["role"] == "INDIVIDUAL"
 

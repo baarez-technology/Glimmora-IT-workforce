@@ -71,9 +71,7 @@ class UserService:
         )
         return user
 
-    async def register_individual(
-        self, *, email: str, full_name: str, password: str
-    ) -> User:
+    async def register_individual(self, *, email: str, full_name: str, password: str) -> User:
         """Self-service signup for an individual.
 
         Distinct from `create_user`, which an administrator calls to make a

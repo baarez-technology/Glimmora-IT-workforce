@@ -192,3 +192,58 @@ class TestSearchEndpoints:
 
         sales, _ = await as_role(Role.SALES)
         assert (await sales.get(f"{API}/job-feed/search/available")).status_code == 403
+
+    async def test_a_finished_search_serialises_its_results(self, client, make_user, monkeypatch):
+        """The collect endpoint, with results actually in it.
+
+        This went to production returning 500 for every poll. `SearchResult` is
+        a slotted dataclass, so it has no `__dict__` and `vars()` raises -- and
+        nothing exercised this line, because the only endpoint test here asked
+        whether search was *available*, never collected a run carrying results.
+        """
+        from datetime import date
+
+        from app.core.permissions import Role
+        from app.engines.jobsearch.provider import SearchResult, SearchRun, SearchStatus
+        from app.models.jobfeed import WorkplaceType
+        from app.services.jobsearch import JobSearchService
+
+        async def finished(self, search_id: str) -> SearchRun:
+            return SearchRun(
+                id=search_id,
+                status=SearchStatus.SUCCEEDED,
+                results=[
+                    SearchResult(
+                        title="Frontend Developer",
+                        company_name="Acme",
+                        location="Bengaluru, India",
+                        country="IN",
+                        workplace_type=WorkplaceType.REMOTE,
+                        description="Build things.",
+                        url="https://example.com/jobs/1",
+                        posted_at=date(2026, 9, 30),
+                        external_id="1",
+                    )
+                ],
+            )
+
+        monkeypatch.setattr(JobSearchService, "collect", finished)
+
+        person = await make_user(Role.INDIVIDUAL)
+        login = await client.post(
+            f"{API}/auth/login",
+            json={"email": person.email, "password": "Glimmora-Test-2026!"},
+        )
+        client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
+
+        response = await client.get(f"{API}/job-feed/search/abc123")
+        assert response.status_code == 200, response.text
+
+        body = response.json()
+        assert body["status"] == "SUCCEEDED"
+        assert len(body["results"]) == 1
+
+        result = body["results"][0]
+        assert result["title"] == "Frontend Developer"
+        assert result["workplace_type"] == "REMOTE"
+        assert result["posted_at"] == "2026-09-30"
