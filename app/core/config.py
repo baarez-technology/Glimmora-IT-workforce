@@ -46,6 +46,17 @@ class AIProvider(StrEnum):
     NULL = "null"
 
 
+class JobSearchProvider(StrEnum):
+    """Where job search results come from.
+
+    NULL is the default and is not a degraded mode: with no provider the
+    search screen is absent rather than present and empty.
+    """
+
+    APIFY = "apify"
+    NULL = "null"
+
+
 class EmailTransport(StrEnum):
     SMTP = "smtp"
     LOG = "log"
@@ -122,6 +133,20 @@ class Settings(BaseSettings):
     AI_DAILY_TOKEN_CEILING: int = 2_000_000
     AI_CIRCUIT_BREAKER_FAILURES: int = 5
     AI_CIRCUIT_BREAKER_COOLDOWN_SECONDS: int = 300
+
+    # ---------------------------------------------------------- job search
+    JOB_SEARCH_PROVIDER: JobSearchProvider = JobSearchProvider.NULL
+    APIFY_API_TOKEN: str | None = None
+    #: Which actor to call. An env change, not a code change, so swapping
+    #: provider actors never touches the adapter.
+    APIFY_JOBS_ACTOR: str = "bebity/linkedin-jobs-scraper"
+    #: Every result costs money, so the ceiling is configuration rather than
+    #: something a caller can raise by passing a bigger number.
+    JOB_SEARCH_MAX_ROWS: int = 25
+    #: A run takes about thirty seconds, so results are cached and a repeated
+    #: search is free and instant.
+    JOB_SEARCH_CACHE_SECONDS: int = 900
+    JOB_SEARCH_TIMEOUT_SECONDS: int = 180
 
     # --------------------------------------------------------------- email
     EMAIL_TRANSPORT: EmailTransport = EmailTransport.LOG

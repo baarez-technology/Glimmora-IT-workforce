@@ -17,9 +17,11 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from app.core.deps import SessionDep, require
 from app.core.permissions import Permission
 from app.core.rate_limit import rate_limit
+from app.engines.jobsearch.provider import SearchQuery
 from app.models.identity import User
 from app.models.jobfeed import JobSource, WorkplaceType
 from app.services.jobfeed import JobFeedService, serialise
+from app.services.jobsearch import JobSearchService
 from app.services.user import UserService
 
 router = APIRouter(prefix="/job-feed", tags=["job feed"])
@@ -110,6 +112,49 @@ class AddJobRequest(BaseModel):
     posted_at: date | None = None
 
 
+class SearchRequest(BaseModel):
+    """What to look for.
+
+    `titles` rather than one keyword because the provider takes several, and
+    searching three titles at once costs the same as searching one.
+    """
+
+    titles: list[str] = Field(min_length=1, max_length=5)
+    locations: list[str] = Field(default_factory=list, max_length=5)
+    workplace_type: WorkplaceType | None = None
+    posted_within: str | None = Field(default=None, max_length=16)
+    rows: int = Field(default=25, ge=1, le=100)
+
+
+class SearchStarted(BaseModel):
+    search_id: str
+    status: str
+
+
+class SearchResultResponse(BaseModel):
+    title: str
+    company_name: str | None
+    location: str | None
+    country: str | None
+    workplace_type: WorkplaceType
+    description: str | None
+    url: str | None
+    posted_at: date | None
+    external_id: str | None
+
+
+class SearchRunResponse(BaseModel):
+    search_id: str
+    status: str
+    results: list[SearchResultResponse]
+    error: str | None = None
+
+
+class SearchAvailability(BaseModel):
+    available: bool
+    provider: str | None
+
+
 # ------------------------------------------------------------ registration
 
 
@@ -159,6 +204,68 @@ async def list_feed(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get(
+    "/search/available",
+    response_model=SearchAvailability,
+    summary="Whether job search is configured",
+)
+async def search_available(
+    _: Annotated[User, Depends(require(Permission.JOB_FEED_READ))],
+) -> SearchAvailability:
+    """So the client can hide the search screen rather than offer a dead box."""
+    service = JobSearchService()
+    return SearchAvailability(
+        available=service.available,
+        provider=service.provider.name if service.provider else None,
+    )
+
+
+@router.post(
+    "/search",
+    response_model=SearchStarted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start a job search",
+)
+async def start_search(
+    payload: SearchRequest,
+    _: Annotated[User, Depends(require(Permission.JOB_FEED_READ))],
+) -> SearchStarted:
+    """Accepted, not completed.
+
+    A provider run takes about thirty seconds. Holding the request open for
+    that long would tie up a worker and die at the usual proxy timeout, so the
+    caller gets a handle and collects the results afterwards.
+    """
+    started = await JobSearchService().start(
+        SearchQuery(
+            titles=payload.titles,
+            locations=payload.locations,
+            workplace_type=payload.workplace_type,
+            posted_within=payload.posted_within,
+            rows=payload.rows,
+        )
+    )
+    return SearchStarted(**started)
+
+
+@router.get(
+    "/search/{search_id}",
+    response_model=SearchRunResponse,
+    summary="Collect a search once it has finished",
+)
+async def collect_search(
+    search_id: str,
+    _: Annotated[User, Depends(require(Permission.JOB_FEED_READ))],
+) -> SearchRunResponse:
+    run = await JobSearchService().collect(search_id)
+    return SearchRunResponse(
+        search_id=run.id,
+        status=run.status.value,
+        results=[SearchResultResponse(**vars(item)) for item in run.results],
+        error=run.error,
     )
 
 
