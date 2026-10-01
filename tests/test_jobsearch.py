@@ -176,7 +176,7 @@ class TestSearchEndpoints:
     async def test_availability_is_reported_rather_than_guessed(self, client, make_user):
         from app.core.permissions import Role
 
-        person = await make_user(Role.INDIVIDUAL)
+        person = await make_user(Role.SALES)
         login = await client.post(
             f"{API}/auth/login",
             json={"email": person.email, "password": "Glimmora-Test-2026!"},
@@ -187,11 +187,18 @@ class TestSearchEndpoints:
         assert response.status_code == 200
         assert "available" in response.json()
 
-    async def test_staff_cannot_reach_job_search(self, as_role):
+    async def test_sourcing_roles_reach_job_search(self, as_role):
+        """Market sourcing is Sales and Resourcing work now."""
         from app.core.permissions import Role
 
         sales, _ = await as_role(Role.SALES)
-        assert (await sales.get(f"{API}/job-feed/search/available")).status_code == 403
+        assert (await sales.get(f"{API}/job-feed/search/available")).status_code == 200
+
+    async def test_management_cannot_reach_job_search(self, as_role):
+        from app.core.permissions import Role
+
+        management, _ = await as_role(Role.MANAGEMENT)
+        assert (await management.get(f"{API}/job-feed/search/available")).status_code == 403
 
     async def test_a_finished_search_serialises_its_results(self, client, make_user, monkeypatch):
         """The collect endpoint, with results actually in it.
@@ -229,7 +236,7 @@ class TestSearchEndpoints:
 
         monkeypatch.setattr(JobSearchService, "collect", finished)
 
-        person = await make_user(Role.INDIVIDUAL)
+        person = await make_user(Role.SALES)
         login = await client.post(
             f"{API}/auth/login",
             json={"email": person.email, "password": "Glimmora-Test-2026!"},

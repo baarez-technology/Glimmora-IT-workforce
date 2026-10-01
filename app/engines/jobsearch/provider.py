@@ -63,6 +63,11 @@ class SearchResult:
     url: str | None
     posted_at: date | None
     external_id: str | None = None
+    #: True when `workplace_type` was read out of the job text rather than
+    #: stated by the provider. Kept separate so the UI can say which it is:
+    #: an inferred arrangement is a useful filter, not a fact to quote at a
+    #: client.
+    workplace_inferred: bool = False
 
 
 @dataclass(slots=True)

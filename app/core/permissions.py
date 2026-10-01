@@ -23,9 +23,6 @@ class Role(StrEnum):
     MANAGEMENT = "MANAGEMENT"
     SALES = "SALES"
     HR_RESOURCING = "HR_RESOURCING"
-    #: Not a Glimmora employee. An individual who signed themselves up to
-    #: follow their own job feed, and who can see nothing of the business.
-    INDIVIDUAL = "INDIVIDUAL"
 
 
 ROLE_LABELS: dict[Role, str] = {
@@ -33,7 +30,6 @@ ROLE_LABELS: dict[Role, str] = {
     Role.MANAGEMENT: "Management",
     Role.SALES: "Sales",
     Role.HR_RESOURCING: "HR / Resourcing",
-    Role.INDIVIDUAL: "Individual",
 }
 
 ROLE_DESCRIPTIONS: dict[Role, str] = {
@@ -47,9 +43,6 @@ ROLE_DESCRIPTIONS: dict[Role, str] = {
     ),
     Role.HR_RESOURCING: (
         "Talent, documents, availability and redeployment. Sees consultant cost, not client margin."
-    ),
-    Role.INDIVIDUAL: (
-        "Their own job feed and nothing else. Not a Glimmora employee and sees no business data."
     ),
 }
 
@@ -139,13 +132,17 @@ class Permission(StrEnum):
     FIELD_DOCUMENT_PERSONAL_VIEW = "document.personal:view"
     FIELD_DOCUMENT_PERSONAL_DOWNLOAD = "document.personal:download"
 
-    # --- the individual job feed -----------------------------------------
+    # --- the job offers workspace -----------------------------------------
     #: Read your own feed. Scoping is by row, not by role: holding this
     #: permission grants access to your own items and to nobody else's, so
     #: an Admin holding it still sees only their own (empty) feed.
     JOB_FEED_READ = "job_feed:read"
     #: Mark read, save, unsave -- again only on your own items.
     JOB_FEED_WRITE = "job_feed:write"
+    #: Pass a job to a colleague's feed. Writing into somebody else's rows is
+    #: the one thing row-scoping otherwise forbids, so it is its own
+    #: permission rather than part of JOB_FEED_WRITE.
+    JOB_FEED_SHARE = "job_feed:share"
 
 
 P = Permission
@@ -240,6 +237,11 @@ _SALES: frozenset[Permission] = frozenset(
         P.FIELD_BILLING_RATE,
         P.FIELD_MARGIN,
         P.FIELD_CONTRACT_VALUE,
+        # Sourcing the open market is demand-side work: Sales searches for the
+        # roles clients are hiring for and passes them to Resourcing.
+        P.JOB_FEED_READ,
+        P.JOB_FEED_WRITE,
+        P.JOB_FEED_SHARE,
     }
 )
 
@@ -284,34 +286,27 @@ _HR_RESOURCING: frozenset[Permission] = frozenset(
         P.FIELD_RESOURCE_COST,
         P.FIELD_DOCUMENT_PERSONAL_VIEW,
         P.FIELD_DOCUMENT_PERSONAL_DOWNLOAD,
-    }
-)
-
-_INDIVIDUAL: frozenset[Permission] = frozenset(
-    {
-        # Deliberately tiny. An individual is not staff: they hold no read on
-        # accounts, demand, talent, pipeline, billing or administration, and
-        # the two permissions they do hold reach only their own rows.
+        # Resourcing works the same open market from the supply side, and
+        # receives what Sales passes across.
         P.JOB_FEED_READ,
         P.JOB_FEED_WRITE,
+        P.JOB_FEED_SHARE,
     }
 )
 
 #: The roles held by Glimmora employees.
 #:
-#: INDIVIDUAL is deliberately outside this set. It exists so that "every role
-#: can read accounts" style checks mean what they say -- an individual is not
-#: staff and must not be swept into a business-access assertion.
-STAFF_ROLES: frozenset[Role] = frozenset(
-    {Role.ADMIN, Role.MANAGEMENT, Role.SALES, Role.HR_RESOURCING}
-)
+#: Every role is now a staff role -- the platform has no external users. The
+#: set is kept because the authorization tests read as assertions about staff
+#: access, and because reintroducing a non-staff role must be a deliberate
+#: edit here rather than something that quietly inherits business access.
+STAFF_ROLES: frozenset[Role] = frozenset(Role)
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.ADMIN: ALL_PERMISSIONS,
     Role.MANAGEMENT: _MANAGEMENT,
     Role.SALES: _SALES,
     Role.HR_RESOURCING: _HR_RESOURCING,
-    Role.INDIVIDUAL: _INDIVIDUAL,
 }
 
 # Field permissions are called out separately so the Admin UI can present the

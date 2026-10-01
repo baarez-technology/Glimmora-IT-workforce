@@ -164,7 +164,7 @@ class TestBrevoPayload:
 @pytest.fixture
 async def individual(client, make_user):
     async def _make():
-        user = await make_user(Role.INDIVIDUAL)
+        user = await make_user(Role.SALES)
         response = await client.post(
             f"{API}/auth/login", json={"email": user.email, "password": TEST_PASSWORD}
         )
@@ -232,8 +232,8 @@ class TestPaste:
 
     async def test_a_paste_lands_in_the_callers_own_feed(self, client, make_user):
         """Headers cannot redirect a paste into somebody else's feed."""
-        first = await make_user(Role.INDIVIDUAL)
-        second = await make_user(Role.INDIVIDUAL)
+        first = await make_user(Role.SALES)
+        second = await make_user(Role.SALES)
 
         async def sign_in(user):
             response = await client.post(
@@ -288,7 +288,7 @@ class TestWebhook:
 
     async def test_a_valid_alert_reaches_the_right_feed(self, client, make_user, monkeypatch):
         monkeypatch.setattr(settings, "JOB_ALERTS_WEBHOOK_SECRET", "secret-value")
-        user = await make_user(Role.INDIVIDUAL)
+        user = await make_user(Role.SALES)
 
         response = await client.post(
             f"{API}/inbound/brevo/secret-value",

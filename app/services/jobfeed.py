@@ -78,6 +78,7 @@ class JobFeedService:
         workplace_type: WorkplaceType | None = None,
         unread_only: bool = False,
         saved_only: bool = False,
+        shared_only: bool = False,
         q: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -92,6 +93,8 @@ class JobFeedService:
             conditions.append(JobFeedItem.is_read.is_(False))
         if saved_only:
             conditions.append(JobFeedItem.is_saved.is_(True))
+        if shared_only:
+            conditions.append(JobFeedItem.shared_by_user_id.is_not(None))
 
         if workplace_type is not None:
             conditions.append(JobPosting.workplace_type == workplace_type)
@@ -126,39 +129,76 @@ class JobFeedService:
         )
         return list(rows), int(total)
 
-    async def counts(self, *, actor: User) -> dict[str, int]:
-        """Totals for the filter chips, so a count never contradicts a list."""
+    async def counts(
+        self,
+        *,
+        actor: User,
+        saved_only: bool = False,
+        shared_only: bool = False,
+    ) -> dict[str, int]:
+        """Totals for the filter chips, so a count never contradicts a list.
+
+        The arrangement breakdown and `total` are scoped to the same view the
+        chips sit above. Counting the whole feed on the Saved tab is how you
+        get "All 2" over an empty list -- the chips have to answer for what
+        clicking them would show, not for the feed in general.
+
+        `unread`, `saved` and `shared_unack` stay feed-wide on purpose: they
+        drive the tab badges and the Mark-all-read button, which are about the
+        whole feed wherever you happen to be standing.
+        """
+        scope = [JobFeedItem.user_id == actor.id]
+        if saved_only:
+            scope.append(JobFeedItem.is_saved.is_(True))
+        if shared_only:
+            scope.append(JobFeedItem.shared_by_user_id.is_not(None))
+
         rows = await self.session.execute(
             select(JobPosting.workplace_type, func.count())
             .join(JobFeedItem, JobFeedItem.posting_id == JobPosting.id)
-            .where(JobFeedItem.user_id == actor.id)
+            .where(*scope)
             .group_by(JobPosting.workplace_type)
         )
         by_workplace = {row[0].value: int(row[1]) for row in rows}
 
-        unread = (
-            await self.session.execute(
-                select(func.count())
-                .select_from(JobFeedItem)
-                .where(JobFeedItem.user_id == actor.id, JobFeedItem.is_read.is_(False))
+        async def tally(*conditions) -> int:
+            return int(
+                (
+                    await self.session.execute(
+                        select(func.count())
+                        .select_from(JobFeedItem)
+                        .where(JobFeedItem.user_id == actor.id, *conditions)
+                    )
+                ).scalar_one()
             )
-        ).scalar_one()
-        saved = (
-            await self.session.execute(
-                select(func.count())
-                .select_from(JobFeedItem)
-                .where(JobFeedItem.user_id == actor.id, JobFeedItem.is_saved.is_(True))
-            )
-        ).scalar_one()
 
         return {
             "total": sum(by_workplace.values()),
-            "unread": int(unread),
-            "saved": int(saved),
+            "unread": await tally(JobFeedItem.is_read.is_(False)),
+            "saved": await tally(JobFeedItem.is_saved.is_(True)),
+            "shared": await tally(JobFeedItem.shared_by_user_id.is_not(None)),
+            # The badge counts handovers not yet opened. Counting every shared
+            # job would leave a badge that can never go away.
+            "shared_unack": await tally(
+                JobFeedItem.shared_by_user_id.is_not(None),
+                JobFeedItem.share_acknowledged.is_(False),
+            ),
             **{
                 workplace.value: by_workplace.get(workplace.value, 0) for workplace in WorkplaceType
             },
         }
+
+    async def delete_item(self, item_id: uuid.UUID, *, actor: User) -> None:
+        """Remove a job from your own feed.
+
+        Deletes the feed item, never the posting: the posting is shared with
+        everyone else it reached, so removing it would take the job out of
+        their feeds too. Somebody else's item raises NotFoundError, the same
+        way reading one does.
+        """
+        item = await self.get_item(item_id, actor=actor)
+        await self.session.delete(item)
+        await self.session.flush()
 
     async def get_item(self, item_id: uuid.UUID, *, actor: User) -> JobFeedItem:
         """One item, if it is this person's.
@@ -198,6 +238,112 @@ class JobFeedService:
         await self.session.flush()
         return item
 
+    async def share(
+        self,
+        item_id: uuid.UUID,
+        *,
+        actor: User,
+        recipient_ids: list[uuid.UUID],
+        note: str | None = None,
+    ) -> list[JobFeedItem]:
+        """Pass one of your jobs to colleagues.
+
+        The posting is already deduplicated, so sharing is just a feed item in
+        somebody else's name pointing at the same posting. A recipient who
+        already holds the job keeps their read/saved state — only the handover
+        is stamped on, so "Sales sent you this" survives even when the job was
+        already sitting unread in their feed.
+
+        Sending to yourself is dropped rather than refused: selecting your own
+        name in a multi-pick is a slip, not an error worth failing the whole
+        call for.
+        """
+        item = await self.get_item(item_id, actor=actor)
+        now = datetime.now(UTC)
+
+        wanted = {rid for rid in recipient_ids if rid != actor.id}
+        if not wanted:
+            return []
+
+        # Only real, active staff. An id for a deactivated or deleted account
+        # is skipped silently: the sender picked from a list, and failing the
+        # whole share because one name went stale helps nobody.
+        recipients = list(
+            (
+                await self.session.execute(
+                    select(User).where(
+                        User.id.in_(wanted),
+                        User.is_active.is_(True),
+                    )
+                )
+            ).scalars()
+        )
+
+        existing_by_user = {
+            row.user_id: row
+            for row in (
+                await self.session.execute(
+                    select(JobFeedItem).where(
+                        JobFeedItem.posting_id == item.posting_id,
+                        JobFeedItem.user_id.in_([r.id for r in recipients]),
+                    )
+                )
+            ).scalars()
+        }
+
+        delivered: list[JobFeedItem] = []
+        for recipient in recipients:
+            target = existing_by_user.get(recipient.id)
+            if target is None:
+                target = JobFeedItem(
+                    user_id=recipient.id,
+                    posting_id=item.posting_id,
+                    received_at=now,
+                )
+                self.session.add(target)
+            target.shared_by_user_id = actor.id
+            target.share_note = (note or "").strip() or None
+            target.shared_at = now
+            target.share_acknowledged = False
+            delivered.append(target)
+
+        await self.session.flush()
+        return delivered
+
+    async def shared_with_me_count(self, *, actor: User) -> int:
+        """Handovers this person has not opened yet — the nav badge."""
+        return int(
+            (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(JobFeedItem)
+                    .where(
+                        JobFeedItem.user_id == actor.id,
+                        JobFeedItem.shared_by_user_id.is_not(None),
+                        JobFeedItem.share_acknowledged.is_(False),
+                    )
+                )
+            ).scalar_one()
+        )
+
+    async def acknowledge_shares(self, *, actor: User) -> int:
+        """Mark every handover as seen. Does not mark the jobs themselves read."""
+        rows = list(
+            (
+                await self.session.execute(
+                    select(JobFeedItem).where(
+                        JobFeedItem.user_id == actor.id,
+                        JobFeedItem.shared_by_user_id.is_not(None),
+                        JobFeedItem.share_acknowledged.is_(False),
+                    )
+                )
+            ).scalars()
+        )
+        for row in rows:
+            row.share_acknowledged = True
+        await self.session.flush()
+        return len(rows)
+
     async def mark_all_read(self, *, actor: User) -> int:
         rows = (
             (
@@ -233,6 +379,7 @@ class JobFeedService:
         posted_at: date | None = None,
         raw_excerpt: str | None = None,
         received_at: datetime | None = None,
+        is_saved: bool = False,
     ) -> JobFeedItem:
         """Put a posting into one person's feed.
 
@@ -285,6 +432,11 @@ class JobFeedService:
 
         if existing is not None:
             existing.received_at = received_at or datetime.now(UTC)
+            # Keeping something already in the feed is still keeping it; the
+            # flag only ever goes on here, never off.
+            if is_saved:
+                existing.is_saved = True
+                existing.is_read = True
             await self.session.flush()
             return existing
 
@@ -292,6 +444,9 @@ class JobFeedService:
             user_id=actor.id,
             posting_id=posting.id,
             received_at=received_at or datetime.now(UTC),
+            is_saved=is_saved,
+            # Deliberately keeping something is having seen it.
+            is_read=is_saved,
         )
         self.session.add(item)
         await self.session.flush()
@@ -301,11 +456,17 @@ class JobFeedService:
 def serialise(item: JobFeedItem) -> dict[str, Any]:
     """Flatten an item and its posting into one object for the client."""
     posting = item.posting
+    sender = getattr(item, "shared_by", None)
     return {
         "id": item.id,
         "received_at": item.received_at,
         "is_read": item.is_read,
         "is_saved": item.is_saved,
+        "shared_by_name": getattr(sender, "full_name", None),
+        "shared_by_role": getattr(getattr(sender, "role", None), "value", None),
+        "share_note": item.share_note,
+        "shared_at": item.shared_at,
+        "share_acknowledged": item.share_acknowledged,
         "posting_id": posting.id,
         "title": posting.title,
         "company_name": posting.company_name,

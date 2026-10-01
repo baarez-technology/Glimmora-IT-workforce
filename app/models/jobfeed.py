@@ -19,6 +19,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -92,7 +93,13 @@ class JobPosting(BaseEntity):
 
 
 class JobFeedItem(BaseEntity):
-    """One individual's copy of a posting. Private to them."""
+    """One person's copy of a posting. Private to them.
+
+    `shared_by_user_id` is what makes a handover between Sales and Resourcing
+    legible. A shared job is not a different kind of row — it is an ordinary
+    feed item that happens to record who put it there, so it dedupes, filters
+    and saves exactly like one that arrived by alert or search.
+    """
 
     __tablename__ = "job_feed_items"
 
@@ -107,7 +114,27 @@ class JobFeedItem(BaseEntity):
     is_read: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
     is_saved: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
 
+    # --- handover between colleagues ------------------------------------
+    #: Who passed this across, when somebody did. NULL for a job that arrived
+    #: by alert or search. SET NULL on delete so the note survives the sender
+    #: leaving: "shared by a former colleague" beats losing the row.
+    shared_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    #: What they said when they sent it. Optional: most handovers are obvious
+    #: from the job itself.
+    share_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shared_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
+    #: Cleared when the recipient opens it, so the nav badge can count
+    #: handovers without counting every unread job in the feed.
+    share_acknowledged: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)
+
     posting: Mapped[JobPosting] = relationship(back_populates="items", lazy="raise")
+    shared_by: Mapped[Any] = relationship("User", foreign_keys=[shared_by_user_id], lazy="selectin")
+
+    @property
+    def is_shared(self) -> bool:
+        return self.shared_by_user_id is not None
 
     __table_args__ = (
         # The same job reaching the same person twice is one item, updated.
